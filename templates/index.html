@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HeartLens — Multi-User Vitals Monitor</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="#0a1512">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="monitor-header">
+      <div class="brand">
+        <span class="brand-mark">♥ HEARTLENS</span>
+        <span class="brand-sub">rPPG Vitals Instrument</span>
+      </div>
+      <div class="waveform-strip"><canvas id="waveformCanvas"></canvas></div>
+      <div class="live-pill"><span class="live-dot"></span>LIVE</div>
+    </div>
+    <p class="subtitle">Contactless heart rate, respiration &amp; stress — your own camera, your own session</p>
+    <p class="active-sessions-note" id="activeSessionsNote"></p>
+
+    <div class="user-bar panel">
+      <input id="userName" type="text" placeholder="Enter your name for personalized baseline">
+      <button id="setUserBtn" class="btn-small">Set User</button>
+      <span id="baselineInfo" class="baseline-info"></span>
+    </div>
+
+    <div class="main-grid">
+      <div class="video-wrap" id="videoWrap">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <canvas id="overlayCanvas"></canvas>
+        <p id="camStatus" class="cam-status">Requesting camera access…</p>
+        <span class="cam-tag">CH.01 · OPTICAL</span>
+      </div>
+
+      <div class="spectrum-wrap panel">
+        <p class="panel-label">FFT Spectrum <span class="hint">peak = heart rate</span></p>
+        <canvas id="spectrumChart" height="180"></canvas>
+
+        <p class="panel-label" style="margin-top:16px;">AMCF Region Confidence</p>
+        <div class="confidence-bars">
+          <div class="conf-row"><span class="conf-label">FOREHEAD</span><div class="conf-track"><div id="conf-forehead" class="conf-fill"></div></div></div>
+          <div class="conf-row"><span class="conf-label">CHEEK · L</span><div class="conf-track"><div id="conf-cheek_l" class="conf-fill"></div></div></div>
+          <div class="conf-row"><span class="conf-label">CHEEK · R</span><div class="conf-track"><div id="conf-cheek_r" class="conf-fill"></div></div></div>
+        </div>
+
+        <p class="panel-label" style="margin-top:16px;">Group Channels <span class="hint">other faces in frame</span></p>
+        <div id="peopleList" class="people-list"><span class="hint">No other people detected</span></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card panel">
+        <span class="label">Heart Rate</span>
+        <span id="bpm" class="value">--</span>
+        <span class="unit">BPM</span>
+      </div>
+      <div class="stat-card panel">
+        <span class="label">Respiration</span>
+        <span id="resp" class="value">--</span>
+        <span class="unit">breaths/min</span>
+      </div>
+      <div class="stat-card panel" id="stressCard">
+        <span class="label">Fused Stress</span>
+        <span id="stress" class="value">Calibrating...</span>
+        <span id="smileNote" class="unit"></span>
+      </div>
+    </div>
+
+    <div class="validation-box panel">
+      <p class="panel-label">Accuracy Validation <span class="hint">compare against a phone/oximeter reading</span></p>
+      <div class="validation-row">
+        <input id="refBpm" type="number" placeholder="Reference BPM">
+        <button id="logRefBtn" class="btn-small">Log Reading</button>
+        <span id="validationStats" class="hint"></span>
+      </div>
+    </div>
+
+    <div class="research-box panel">
+      <p class="panel-label">Research Mode <span class="hint">skin-tone robustness study — see README</span></p>
+      <div class="validation-row">
+        <select id="skinTone">
+          <option value="">Select skin tone (Fitzpatrick)</option>
+          <option value="I-II (Light)">Type I-II (Light)</option>
+          <option value="III-IV (Medium)">Type III-IV (Medium)</option>
+          <option value="V-VI (Dark)">Type V-VI (Dark)</option>
+        </select>
+        <button id="setSkinToneBtn" class="btn-small">Set</button>
+      </div>
+      <div class="validation-row" style="margin-top:10px;">
+        <label class="switch-label">
+          <input type="checkbox" id="amcfToggle" checked>
+          AMCF Fusion Enabled <span class="hint">(uncheck to test single-ROI only, for comparison)</span>
+        </label>
+      </div>
+      <div class="validation-row" style="margin-top:10px;">
+        <button id="resetRunBtn" class="btn-secondary-solid">RESET &amp; RECALIBRATE</button>
+        <button id="saveResearchBtn" class="btn-secondary-solid">SAVE RESEARCH ENTRY</button>
+        <a href="/research" target="_blank" class="btn-secondary-solid" style="text-decoration:none; display:inline-block;">VIEW STUDY RESULTS</a>
+      </div>
+      <p class="hint" style="margin-top:8px;">Workflow: set skin tone → keep AMCF ON → wait calibration → log 3-5 reference readings above → Save Research Entry → Reset &amp; Recalibrate → turn AMCF OFF → repeat readings → Save again → next volunteer.</p>
+    </div>
+
+    <div class="actions">
+      <a id="reportLink" href="#" target="_blank" class="btn">DOWNLOAD SESSION REPORT</a>
+      <button id="saveSessionBtn" class="btn-secondary-solid">SAVE SESSION TO BASELINE</button>
+    </div>
+
+    <p class="disclaimer">
+      ⚠ Educational demo only — not a medical device. Your camera never leaves your
+      browser except as small periodic snapshots sent to this server for processing;
+      nothing is recorded permanently. Facial-expression fusion is a simple heuristic
+      (smile detection), not a trained emotion model. Stay still and well-lit for
+      ~10 seconds to stabilize.
+    </p>
+  </div>
+
+  <div id="breathingCoach" class="breathing-overlay hidden">
+    <div class="breathing-box">
+      <p class="breathing-title">Elevated stress detected</p>
+      <div class="breathing-circle"><span id="breathingText">Breathe In</span></div>
+      <p class="breathing-sub">Follow the circle for a minute</p>
+      <button id="closeBreathing" class="btn-secondary">Close</button>
+    </div>
+  </div>
+
+  <script>
+    // ---- Unique session id for this browser tab ----
+    const sessionId = (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Math.random().toString(36).slice(2));
+    document.getElementById('reportLink').href = '/report?session_id=' + sessionId;
+
+    let dismissed = false;
+
+    // ---- Header cardiac waveform (signature element) ----
+    // Draws a continuous sweeping ECG-style trace (P-QRS-T complex repeated).
+    // Sweep speed subtly reflects the live BPM once calibrated, like a real monitor.
+    (function () {
+      const wc = document.getElementById('waveformCanvas');
+      const wctx = wc.getContext('2d');
+      let phase = 0;
+      let currentBpm = 72;
+
+      function resize() {
+        wc.width = wc.clientWidth * devicePixelRatio;
+        wc.height = wc.clientHeight * devicePixelRatio;
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      // one PQRST cycle as normalized (x 0-1, y -1..1) points
+      const cycle = [
+        [0.00, 0], [0.08, 0.05], [0.14, 0], [0.18, -0.08], [0.22, 0],
+        [0.30, 0.9], [0.34, -0.5], [0.38, 0.15], [0.46, 0.25], [0.50, 0],
+        [0.70, 0], [1.00, 0],
+      ];
+
+      function draw() {
+        const w = wc.width, h = wc.height;
+        wctx.clearRect(0, 0, w, h);
+        wctx.strokeStyle = '#3dffb0';
+        wctx.lineWidth = 2 * devicePixelRatio;
+        wctx.shadowBlur = 8;
+        wctx.shadowColor = 'rgba(61,255,176,0.7)';
+        wctx.beginPath();
+
+        const cycleWidth = w * 0.22;
+        const midY = h * 0.55;
+        const amp = h * 0.4;
+        const nCycles = Math.ceil(w / cycleWidth) + 2;
+        const offset = (phase % cycleWidth);
+
+        for (let c = -1; c < nCycles; c++) {
+          for (let i = 0; i < cycle.length; i++) {
+            const [px, py] = cycle[i];
+            const x = c * cycleWidth + px * cycleWidth - offset;
+            const y = midY - py * amp;
+            if (x < -10 || x > w + 10) continue;
+            if (i === 0) wctx.moveTo(x, y); else wctx.lineTo(x, y);
+          }
+        }
+        wctx.stroke();
+
+        // speed scales gently with BPM (72bpm baseline)
+        const speed = (currentBpm / 72) * 1.6 * devicePixelRatio;
+        phase += speed;
+        requestAnimationFrame(draw);
+      }
+      draw();
+
+      window.updateWaveformBpm = (bpm) => { if (bpm > 0) currentBpm = bpm; };
+    })();
+
+    // ---- Spectrum chart ----
+    const spectrumCtx = document.getElementById('spectrumChart').getContext('2d');
+    const spectrumChart = new Chart(spectrumCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Signal power', data: [], borderColor: '#3dffb0', backgroundColor: 'rgba(61,255,176,0.12)', fill: true, pointRadius: 0, tension: 0.25, borderWidth: 1.5 }] },
+      options: { responsive: true, animation: false,
+        scales: { x: { title: { display: true, text: 'BPM', color: '#9fbdb2', font: { family: 'IBM Plex Mono', size: 10 } }, ticks: { color: '#62786f', font: { family: 'IBM Plex Mono', size: 9 } }, grid: { color: 'rgba(159,189,178,0.08)' } },
+                  y: { title: { display: true, text: 'Power', color: '#9fbdb2', font: { family: 'IBM Plex Mono', size: 10 } }, ticks: { color: '#62786f', font: { family: 'IBM Plex Mono', size: 9 } }, min: 0, max: 1, grid: { color: 'rgba(159,189,178,0.08)' } } },
+        plugins: { legend: { display: false } } }
+    });
+
+    // ---- Camera setup ----
+    const video = document.getElementById('localVideo');
+    const overlay = document.getElementById('overlayCanvas');
+    const octx = overlay.getContext('2d');
+    const camStatus = document.getElementById('camStatus');
+    const captureCanvas = document.createElement('canvas');
+    const cctx = captureCanvas.getContext('2d');
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
+        video.srcObject = stream;
+        camStatus.classList.add('hidden');
+        video.addEventListener('loadedmetadata', () => {
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
+          captureCanvas.width = video.videoWidth;
+          captureCanvas.height = video.videoHeight;
+          loop();
+        });
+      } catch (err) {
+        camStatus.textContent = 'Camera access denied or unavailable. Please allow camera permission and reload.';
+      }
+    }
+
+    function drawOverlay(data) {
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      if (data.face_box) {
+        const [x, y, w, h] = data.face_box;
+        octx.strokeStyle = 'rgba(159,189,178,0.6)'; octx.lineWidth = 1.5; octx.strokeRect(x, y, w, h);
+      }
+      if (data.roi_boxes) {
+        const colors = { forehead: '#3dffb0', cheek_l: '#ffb627', cheek_r: '#ffb627' };
+        octx.font = '11px IBM Plex Mono';
+        for (const [name, box] of Object.entries(data.roi_boxes)) {
+          const [x, y, w, h] = box;
+          const c = colors[name] || '#ffffff';
+          octx.strokeStyle = c; octx.lineWidth = 1.5; octx.strokeRect(x, y, w, h);
+        }
+      }
+      if (data.chest_box) {
+        const [x, y, w, h] = data.chest_box;
+        octx.strokeStyle = 'rgba(61,255,176,0.4)'; octx.lineWidth = 1; octx.setLineDash([4, 3]); octx.strokeRect(x, y, w, h); octx.setLineDash([]);
+      }
+      if (data.secondary_people) {
+        octx.strokeStyle = '#9fbdb2'; octx.lineWidth = 1.5; octx.font = '11px IBM Plex Mono';
+        data.secondary_people.forEach(p => {
+          const [x, y, w, h] = p.bbox;
+          octx.strokeRect(x, y, w, h);
+          octx.fillStyle = '#9fbdb2';
+          octx.fillText(`P${p.id}: ${p.bpm > 0 ? p.bpm : '...'}`, x, y - 6);
+        });
+      }
+    }
+
+    let busy = false;
+    async function sendFrame() {
+      if (busy || video.videoWidth === 0) return;
+      busy = true;
+      try {
+        cctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+        const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.6);
+        const res = await fetch('/process_frame', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, image: dataUrl }),
+        });
+        const data = await res.json();
+        if (!data.error) updateUI(data);
+      } catch (e) { console.error(e); }
+      busy = false;
+    }
+
+    function loop() {
+      sendFrame();
+      setTimeout(loop, 100); // ~10 fps
+    }
+
+    function updateUI(data) {
+      drawOverlay(data);
+      document.getElementById('bpm').textContent = data.bpm > 0 ? data.bpm : '--';
+      document.getElementById('resp').textContent = data.resp_rate > 0 ? data.resp_rate : '--';
+      document.getElementById('stress').textContent = data.stress;
+      document.getElementById('smileNote').textContent = data.smile_detected ? '🙂 smiling detected' : '';
+      const stressCard = document.getElementById('stressCard');
+      stressCard.classList.remove('stress-calm', 'stress-normal', 'stress-elevated');
+      if (data.stress === 'Calm') stressCard.classList.add('stress-calm');
+      else if (data.stress === 'Normal') stressCard.classList.add('stress-normal');
+      else if (data.stress === 'Elevated') stressCard.classList.add('stress-elevated');
+      if (window.updateWaveformBpm) window.updateWaveformBpm(data.bpm);
+
+      if (data.roi_confidence) {
+        for (const key of ['forehead', 'cheek_l', 'cheek_r']) {
+          const el = document.getElementById('conf-' + key);
+          if (el) el.style.width = (data.roi_confidence[key] || 0) + '%';
+        }
+      }
+
+      const baselineEl = document.getElementById('baselineInfo');
+      if (data.baseline_bpm) {
+        const deltaTxt = data.baseline_delta > 0 ? `+${data.baseline_delta}` : data.baseline_delta;
+        baselineEl.textContent = `Your baseline: ${data.baseline_bpm} BPM (${data.baseline_sessions} sessions) | Today: ${deltaTxt ?? '--'} BPM`;
+      }
+
+      const peopleList = document.getElementById('peopleList');
+      if (data.secondary_people && data.secondary_people.length > 0) {
+        peopleList.innerHTML = data.secondary_people.map(p =>
+          `<div class="person-chip">Person ${p.id}: ${p.bpm > 0 ? p.bpm + ' BPM' : 'calibrating...'}</div>`).join('');
+      } else {
+        peopleList.innerHTML = '<span class="hint">No other people detected</span>';
+      }
+
+      if (data.active_sessions) {
+        document.getElementById('activeSessionsNote').textContent =
+          data.active_sessions > 1 ? `👥 ${data.active_sessions} people are using HeartLens right now` : '';
+      }
+
+      const coach = document.getElementById('breathingCoach');
+      if (data.stress === 'Elevated' && !dismissed) coach.classList.remove('hidden');
+      else if (data.stress !== 'Elevated') { coach.classList.add('hidden'); dismissed = false; }
+    }
+
+    async function pollSpectrum() {
+      try {
+        const res = await fetch('/spectrum?session_id=' + sessionId);
+        const data = await res.json();
+        if (data.freqs && data.freqs.length > 0) {
+          spectrumChart.data.labels = data.freqs.map(f => f.toFixed(0));
+          spectrumChart.data.datasets[0].data = data.power;
+          spectrumChart.update();
+        }
+      } catch (e) { console.error(e); }
+      setTimeout(pollSpectrum, 1500);
+    }
+
+    async function pollValidation() {
+      try {
+        const res = await fetch('/validation_stats?session_id=' + sessionId);
+        const data = await res.json();
+        const el = document.getElementById('validationStats');
+        el.textContent = data.n > 0 ? `N=${data.n} | MAE=${data.mae} BPM${data.correlation !== null ? ' | corr=' + data.correlation : ''}` : 'No readings logged yet';
+      } catch (e) { console.error(e); }
+      setTimeout(pollValidation, 3000);
+    }
+
+    document.getElementById('setUserBtn').addEventListener('click', async () => {
+      const name = document.getElementById('userName').value.trim();
+      if (!name) return;
+      const res = await fetch('/set_user', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId, name }) });
+      const data = await res.json();
+      const baselineEl = document.getElementById('baselineInfo');
+      baselineEl.textContent = data.baseline_bpm ? `Your baseline: ${data.baseline_bpm} BPM (${data.sessions} sessions)` : 'New profile created — save this session to set your baseline.';
+    });
+
+    document.getElementById('saveSessionBtn').addEventListener('click', async () => {
+      const res = await fetch('/save_session', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId }) });
+      const data = await res.json();
+      alert(data.ok ? `Session saved! Baseline: ${data.baseline_bpm} BPM (${data.sessions} sessions)` : `Could not save: ${data.error}`);
+    });
+
+    document.getElementById('logRefBtn').addEventListener('click', async () => {
+      const val = parseFloat(document.getElementById('refBpm').value);
+      if (!val) return;
+      await fetch('/validate', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId, reference_bpm: val }) });
+      document.getElementById('refBpm').value = '';
+    });
+
+    document.getElementById('setSkinToneBtn').addEventListener('click', async () => {
+      const tone = document.getElementById('skinTone').value;
+      if (!tone) return;
+      await fetch('/set_skin_tone', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId, skin_tone: tone }) });
+      alert('Skin tone set: ' + tone);
+    });
+
+    document.getElementById('amcfToggle').addEventListener('change', async (e) => {
+      await fetch('/set_mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId, amcf_enabled: e.target.checked }) });
+    });
+
+    document.getElementById('resetRunBtn').addEventListener('click', async () => {
+      await fetch('/reset_run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId }) });
+      alert('Reset done — recalibrating. Wait ~10s before logging readings.');
+    });
+
+    document.getElementById('saveResearchBtn').addEventListener('click', async () => {
+      const res = await fetch('/save_research_entry', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ session_id: sessionId }) });
+      const data = await res.json();
+      alert(data.ok ? `Saved! MAE = ${data.mae} BPM (from ${data.n} readings)` : `Could not save: ${data.error}`);
+    });
+
+    document.getElementById('closeBreathing').addEventListener('click', () => {
+      dismissed = true;
+      document.getElementById('breathingCoach').classList.add('hidden');
+    });
+
+    setInterval(() => {
+      const el = document.getElementById('breathingText');
+      el.textContent = el.textContent === 'Breathe In' ? 'Breathe Out' : 'Breathe In';
+    }, 4000);
+
+    startCamera();
+    pollSpectrum();
+    pollValidation();
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(err => console.log('SW registration failed', err));
+      });
+    }
+  </script>
+</body>
+</html>

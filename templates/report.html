@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HeartLens — Session Report</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="report-body">
+  <div class="container">
+    <h1>💓 HeartLens — Session Report</h1>
+    <p class="subtitle">{% if user_name %}User: {{ user_name }}{% else %}Guest session{% endif %} — generated at end of monitoring</p>
+
+    <div class="report-summary">
+      <div class="stat-card"><span class="label">Session Length</span><span class="value">{{ session_seconds }}s</span></div>
+      <div class="stat-card"><span class="label">Avg Heart Rate</span><span class="value">{{ avg_bpm }}</span><span class="unit">BPM</span></div>
+      <div class="stat-card"><span class="label">Min / Max BPM</span><span class="value">{{ min_bpm }} / {{ max_bpm }}</span></div>
+      <div class="stat-card"><span class="label">Avg Respiration</span><span class="value">{{ avg_resp }}</span><span class="unit">breaths/min</span></div>
+    </div>
+
+    {% if baseline_bpm %}
+    <h3>Personalized Baseline</h3>
+    <p>Your historical average resting heart rate: <strong>{{ baseline_bpm }} BPM</strong>.
+    This session's average was <strong>{{ avg_bpm }} BPM</strong>
+    ({% if avg_bpm > baseline_bpm %}+{{ (avg_bpm - baseline_bpm) | round(1) }} above{% elif avg_bpm < baseline_bpm %}{{ (avg_bpm - baseline_bpm) | round(1) }} below{% else %}right at{% endif %} your usual baseline).</p>
+    {% endif %}
+
+    {% if val_mae is not none %}
+    <h3>Accuracy Validation</h3>
+    <p>Compared against {{ validation_n }} manually logged reference reading(s):
+    <strong>Mean Absolute Error = {{ val_mae }} BPM</strong>.</p>
+    {% endif %}
+
+    <h3>Stress distribution (fused: physiology + facial cue)</h3>
+    <ul class="stress-list">
+      {% for level, count in stress_counts.items() %}
+      <li><strong>{{ level }}:</strong> {{ count }} readings</li>
+      {% else %}
+      <li>Not enough data yet — let the session run longer.</li>
+      {% endfor %}
+    </ul>
+
+    <h3>Heart rate over time</h3>
+    <canvas id="trendChart" height="200"></canvas>
+
+    <p class="disclaimer">
+      ⚠️ Educational demo only — not a medical device. Values are
+      approximate, derived from webcam rPPG (AMCF pipeline) + optical-flow
+      respiration + a heuristic facial-expression cue.
+    </p>
+
+    <button onclick="window.print()" class="btn no-print">🖨️ Print / Save as PDF</button>
+  </div>
+
+  <script>
+    const log = {{ log | tojson }};
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: log.map(e => e.t + 's'),
+        datasets: [
+          { label: 'BPM', data: log.map(e => e.bpm), borderColor: '#ff6b81', pointRadius: 0, tension: 0.3 },
+          { label: 'Breaths/min', data: log.map(e => e.resp), borderColor: '#4ecdc4', pointRadius: 0, tension: 0.3 }
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#333' } } },
+        scales: { x: { ticks: { color: '#333' } }, y: { ticks: { color: '#333' } } } }
+    });
+  </script>
+</body>
+</html>

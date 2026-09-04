@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HeartLens — Skin-Tone Robustness Study</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="report-body">
+  <div class="container">
+    <h1>🔬 HeartLens — Skin-Tone Robustness Study</h1>
+    <p class="subtitle">AMCF (multi-ROI fusion) vs single-ROI accuracy, grouped by skin tone</p>
+
+    <canvas id="studyChart" height="220"></canvas>
+
+    <h3>Raw entries</h3>
+    <table id="rawTable" class="raw-table">
+      <thead><tr><th>Timestamp</th><th>Name</th><th>Skin Tone</th><th>AMCF</th><th>MAE (BPM)</th><th>N</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <p class="disclaimer">
+      This is a small-scale student study (not a peer-reviewed clinical trial). Motivated by
+      documented literature findings that rPPG accuracy degrades on darker skin tones
+      due to reduced signal-to-noise ratio (e.g. Nowara et al., npj Digital Medicine 2025;
+      Dasari et al.). Log more volunteers across all three skin-tone categories, with both
+      AMCF ON and OFF, for a more reliable comparison.
+    </p>
+
+    <button onclick="window.print()" class="btn no-print">🖨️ Print / Save as PDF</button>
+  </div>
+
+  <script>
+    async function load() {
+      const res = await fetch('/research_summary');
+      const data = await res.json();
+
+      const tbody = document.querySelector('#rawTable tbody');
+      tbody.innerHTML = data.rows.map(r =>
+        `<tr><td>${r.timestamp}</td><td>${r.name}</td><td>${r.skin_tone}</td><td>${r.amcf_enabled}</td><td>${r.mae}</td><td>${r.n_readings}</td></tr>`
+      ).join('') || '<tr><td colspan="6">No entries yet — use Research Mode on the dashboard to log volunteers.</td></tr>';
+
+      const tones = [...new Set(data.groups.map(g => g.skin_tone))];
+      const amcfOn = tones.map(t => {
+        const g = data.groups.find(x => x.skin_tone === t && x.amcf_enabled === 'True');
+        return g ? g.avg_mae : null;
+      });
+      const amcfOff = tones.map(t => {
+        const g = data.groups.find(x => x.skin_tone === t && x.amcf_enabled === 'False');
+        return g ? g.avg_mae : null;
+      });
+
+      new Chart(document.getElementById('studyChart').getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: tones.length ? tones : ['No data yet'],
+          datasets: [
+            { label: 'AMCF ON (multi-ROI fusion)', data: amcfOn, backgroundColor: '#4ecdc4' },
+            { label: 'AMCF OFF (single-ROI)', data: amcfOff, backgroundColor: '#ff6b81' },
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { color: '#333' } }, title: { display: true, text: 'Mean Absolute Error (BPM) by skin tone', color: '#333' } },
+          scales: { x: { ticks: { color: '#333' } }, y: { ticks: { color: '#333' }, title: { display: true, text: 'MAE (BPM, lower = better)', color: '#333' } } }
+        }
+      });
+    }
+    load();
+  </script>
+</body>
+</html>
