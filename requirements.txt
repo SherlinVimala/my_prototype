@@ -2,3 +2,4 @@ flask==3.0.3
 opencv-python==4.10.0.84
 numpy==1.26.4
 scipy==1.13.1
+gunicorn==22.0.0
